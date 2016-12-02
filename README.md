@@ -3,7 +3,9 @@ Various software tools for controlling Phillips HUE Lights
 
 #Dependencies
 Currently dependent on:
+
 libcurl14
+
 wiringPi
 
 #Building project
