@@ -39,8 +39,20 @@
 #define TSL2561_REGISTER_CHAN0_HIGH           (0x8D)
 #define TSL2561_REGISTER_CHAN1_LOW            (0x8E)
 #define TSL2561_REGISTER_CHAN1_HIGH           (0x8F)
+
+
 //Delay getLux function
-#define LUXDELAY 500
+#define LUXDELAY 300
+
+#define KP_NUM  10
+
+typedef enum progState {
+	STATE_WAIT = 0,
+	STATE_FIND,
+	STATE_CONTROL,
+} progState;
+
+progState state = STATE_WAIT;
 
 static size_t read_callback(void *ptr, size_t size, size_t nmemb, void *stream)
 {
@@ -78,7 +90,7 @@ int main(){
 	int fd = 0;
 	CURL *curl;
 	CURLcode res;
-	char message[30]= "{\"on\":true, \"bri\":128}";
+	char message[40];
 	int setpoint = 45;
 	int bri = 150;
 	FILE * src;
@@ -89,42 +101,93 @@ int main(){
 
 	headers = curl_slist_append(headers, "Accept: application/json");
 	
-	printf("%s\n",message);
-	
 	stat("temp", &file_info);
 
 	fd = wiringPiI2CSetup(TSL2561_ADDR_FLOAT);
+	
+	if(1) {
+		state = STATE_FIND;
+	}
+	
 	while(1){
-#if 1
-		lux = getLux(fd);
-		printf("Lux: %d\n", lux);
-#endif
-
-	bri += 2*(setpoint - lux);
-	if(bri<0) {bri = 0;}
-	if(bri>254) {bri = 254;}
-
-	sprintf(message, "{\"on\":true, \"bri\":%d}", bri);
-
-#if 1
-		/* get a curl handle */ 
-		curl = curl_easy_init();
-		if(curl) {
-			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers); 
-			curl_easy_setopt(curl, CURLOPT_URL, "http://192.168.1.180/api/Nqk1wk-FCruCodDE4P-jxgepEri0c8uGj77A24G8/lights/1/state");  
-			curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT"); /* !!! */
+		
+		switch(state) {
+			case STATE_FIND :
 			
-			//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+				printf("Finding setpoint...\n");
+				
+				bri = 200;
+				
+				sprintf(message, "{\"on\":true, \"bri\":%d}", bri);
+				
+				/* get a curl handle */ 
+				curl = curl_easy_init();
+				if(curl) {
+					curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers); 
+					curl_easy_setopt(curl, CURLOPT_URL, "http://192.168.1.180/api/Nqk1wk-FCruCodDE4P-jxgepEri0c8uGj77A24G8/lights/1/state");  
+					curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT"); /* !!! */
+					
+					//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
 
-			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, message); /* data goes here */
+					curl_easy_setopt(curl, CURLOPT_POSTFIELDS, message); /* data goes here */
 
-			res = curl_easy_perform(curl);
+					res = curl_easy_perform(curl);
+					
+					/* always cleanup */ 
+					curl_easy_cleanup(curl);
+					
+				}
+				
+				delay(5000);
+				
+				lux = getLux(fd);
+				printf("Lux: %d\n", lux);
+				
+				setpoint = lux;
+				
+				printf("Setpoint: %d\n", setpoint);
+				
+				state = STATE_CONTROL;
+				
+				break;
+				
 			
-			/* always cleanup */ 
-			curl_easy_cleanup(curl);
-			
+			case STATE_CONTROL :
+
+				lux = getLux(fd);
+				printf("Lux: %d\n", lux);
+
+				bri += KP_NUM*(setpoint - lux);
+				if(bri<0) {bri = 0;}
+				if(bri>254) {bri = 254;}
+
+				if( bri > 0 ) {
+					sprintf(message, "{\"on\":true, \"bri\":%d}", bri);
+				}
+				else {
+					sprintf(message, "{\"on\":false}", bri);
+				}
+
+				/* get a curl handle */ 
+				curl = curl_easy_init();
+				if(curl) {
+					curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers); 
+					curl_easy_setopt(curl, CURLOPT_URL, "http://192.168.1.180/api/Nqk1wk-FCruCodDE4P-jxgepEri0c8uGj77A24G8/lights/1/state");  
+					curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT"); /* !!! */
+					
+					//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+
+					curl_easy_setopt(curl, CURLOPT_POSTFIELDS, message); /* data goes here */
+
+					res = curl_easy_perform(curl);
+					
+					/* always cleanup */ 
+					curl_easy_cleanup(curl);
+					
+				}
+				break;
+		
 		}
-#endif
 
 		usleep(500000);
 	}
