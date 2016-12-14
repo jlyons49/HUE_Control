@@ -47,7 +47,7 @@
 #define LUXDELAY101  110
 
 
-#define KP_NUM  1.5
+#define KP_NUM  0.8
 
 typedef enum progState {
 	STATE_WAIT = 0,
