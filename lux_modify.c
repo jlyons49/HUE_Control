@@ -54,10 +54,10 @@ typedef enum progState {
 	STATE_FIND,
 	STATE_CONTROL,
 	STATE_TIMING,
+	STATE_BULB_TIMING,
 } progState;
 
 progState state = STATE_WAIT;
-int luxDelay;
 struct curl_slist *headers = NULL;
 
 size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp)
@@ -77,6 +77,7 @@ void sendBrightnessMessage( char* message ) {
 		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT"); /* !!! */
 		
 		//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
 
 		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, message); /* data goes here */
 
@@ -89,10 +90,10 @@ void sendBrightnessMessage( char* message ) {
 }
 
 
-int getLux(int fd){
+int getLux(int fd, int fastSample){
    
 	wiringPiI2CWriteReg8(fd, TSL2561_COMMAND_BIT, TSL2561_CONTROL_POWERON); //enable the device
-	if( state == STATE_TIMING) {
+	if( state == STATE_TIMING || fastSample) {
 		wiringPiI2CWriteReg8(fd, TSL2561_REGISTER_TIMING, TSL2561_INTEGRATIONTIME_13MS | 0x10); //16x and timing = 101 mSec
 		//Wait for the conversion to complete
 		delay(LUXDELAY13);
@@ -109,7 +110,7 @@ int getLux(int fd){
 }
 
 int main(int argc, char* argv[]){
-	int lux;
+	int lux, newlux;
 	int fd = 0;
 	int c;
 	char message[40];
@@ -120,20 +121,21 @@ int main(int argc, char* argv[]){
 	struct stat file_info;
 	struct timeval  tv1, tv2;
 	int i = 0;
+	int n = 0;
 	int iCount;
 	int forever = 1;
 	
 	state = STATE_CONTROL;
 	
-	while ((c = getopt (argc, argv, "tfc:s:")) != -1) {
+	while ((c = getopt (argc, argv, "tfbc:s:")) != -1) {
 		switch (c) {
+			case 'b' :
+				state = STATE_BULB_TIMING;
+				break;
+				
 			case 'c' :
 				forever = 0;
 				iCount = atoi(optarg);
-				break;
-			
-			case 't' :
-				state = STATE_TIMING;
 				break;
 			
 			case 'f' :
@@ -142,6 +144,10 @@ int main(int argc, char* argv[]){
 			
 			case 's' :
 				setpoint = atoi(optarg);
+				break;
+				
+			case 't' :
+				state = STATE_TIMING;
 				break;
 				
 			case '?' :
@@ -181,7 +187,7 @@ int main(int argc, char* argv[]){
 				// Delay for a second to settle
 				delay(1000);
 				
-				lux = getLux(fd);
+				lux = getLux(fd, 0);
 				printf("Lux: %d\n", lux);
 				
 				setpoint = lux;
@@ -195,7 +201,7 @@ int main(int argc, char* argv[]){
 			
 			case STATE_CONTROL :
 
-				lux = getLux(fd);
+				lux = getLux(fd, 0);
 				printf("Lux: %d\n", lux);
 
 				bri += KP_NUM*(setpoint - lux);
@@ -214,7 +220,7 @@ int main(int argc, char* argv[]){
 				
 			case STATE_TIMING :				
 				// Get current lux...
-				lux = getLux(fd);
+				lux = getLux(fd, 1);
 				
 				pbri = bri;
 				while(abs(bri-pbri) < 45) bri = rand() % 254;;
@@ -225,7 +231,11 @@ int main(int argc, char* argv[]){
 				
 				gettimeofday(&tv1, NULL);
 				
-				while(getLux(fd) == lux);				
+				
+				do {
+					newlux = getLux(fd, 1);
+				}
+				while( newlux == lux);
 				
 				gettimeofday(&tv2, NULL);
 				
@@ -234,6 +244,45 @@ int main(int argc, char* argv[]){
 				usleep(2000000);
 				
 				break;
+				
+			case STATE_BULB_TIMING :
+				// Get current lux...
+				lux = getLux(fd, 1);
+				
+				pbri = bri;
+				while(abs(bri-pbri) < 45) bri = rand() % 254;;
+				
+				sprintf(message, "{\"on\":true, \"bri\":%d}", bri);
+				
+				sendBrightnessMessage( message );
+				
+				do {
+					newlux = getLux(fd, 1);
+				}
+				while( newlux == lux);
+				
+				gettimeofday(&tv1, NULL);
+				
+				lux = getLux(fd, 0);
+				do {
+					newlux = getLux(fd, 0);
+					if( newlux == lux ) n++;
+					else {
+						lux = newlux;
+						n = 0;
+					}
+					//printf("\nnl %d",newlux);
+				}
+				while( n < 5 );
+				
+				gettimeofday(&tv2, NULL);
+				
+				printf ("\nTotal time = %f useconds\n", (double) (tv2.tv_usec - tv1.tv_usec ) + (double) (tv2.tv_sec - tv1.tv_sec) * 1000000 - 4 * 110000);
+				
+				usleep(2000000);
+				
+				break;
+
 		
 		}
 
